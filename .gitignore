@@ -1,0 +1,17 @@
+# Personal Apple Health data
+Data/raw/
+
+# R / RStudio
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# renv
+renv/library/
+renv/staging/
+renv/local/
+
+# OS files
+.DS_Store
+Thumbs.db

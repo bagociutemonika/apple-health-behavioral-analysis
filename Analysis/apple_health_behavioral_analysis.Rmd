@@ -1,0 +1,321 @@
+---
+title: "Understanding Activity Patterns from Behavioral Data"
+author: "Monika Bagociute"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: flatly
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+---
+
+## 1. Research overview
+
+This project explores longitudinal physical-activity data from an Apple Health
+export to identify recurring behavioral patterns across days and times.
+
+The analysis treats activity records as behavioral data and demonstrates a
+quantitative workflow for moving from raw, longitudinal data to interpretable
+behavioral insights.
+
+### Research question
+
+What behavioral patterns can be identified in longitudinal activity data, and
+how could these patterns inform opportunities for more personalized user
+experiences?
+
+### Sub-questions
+
+1. How does physical activity vary across days of the week?
+2. At what times of day does activity tend to occur?
+3. How consistent is activity over time, and are there recurring periods of
+   lower activity?
+
+### Research approach
+
+The analysis uses exploratory quantitative methods to examine:
+
+- longitudinal activity patterns
+- weekday and weekend differences
+- time-of-day patterns
+- daily variability
+- trends in activity over time
+
+The final section translates observed behavioral patterns into hypotheses that
+could be explored through future quantitative or qualitative user research.
+
+### Data
+
+The data come from a personal Apple Health export. The raw health data are not
+included in this repository because they contain sensitive personal
+information. The analysis is structured so that the raw export can be supplied
+locally without being committed to GitHub.
+
+### Tools
+
+- R
+- R Markdown
+- tidyverse
+- XML
+- lubridate
+- ggthemes
+
+## 2. Data preparation
+
+The Apple Health export is provided locally as a ZIP file containing an
+`export.xml` file. Because the data contain sensitive personal information,
+the raw export is excluded from version control.
+
+The code below expects the export to be available locally and extracts the XML
+file for analysis.
+
+
+```{r setup, message=FALSE, warning=FALSE}
+# Load required packages
+library(XML)
+library(tidyverse)
+library(lubridate)
+library(ggthemes)
+
+# ---------------------------------------------------------
+# 1. Set project directory
+# ---------------------------------------------------------
+
+project_dir <- getwd()
+
+# If the R Markdown document is being knitted from the
+# Analysis folder, move one level up to the project root.
+if (basename(project_dir) == "Analysis") {
+  project_dir <- dirname(project_dir)
+}
+
+# ---------------------------------------------------------
+# 2. Define local data paths
+# ---------------------------------------------------------
+
+zip_path <- file.path(
+  project_dir,
+  "Data",
+  "raw",
+  "export.zip"
+)
+
+extraction_path <- file.path(
+  project_dir,
+  "Data",
+  "raw",
+  "apple_health_export"
+)
+
+# Check that the ZIP file exists
+if (!file.exists(zip_path)) {
+  stop(
+    "Apple Health export not found at: ",
+    zip_path
+  )
+}
+
+# ---------------------------------------------------------
+# 3. Extract the Apple Health export
+# ---------------------------------------------------------
+
+if (!dir.exists(extraction_path)) {
+  dir.create(extraction_path, recursive = TRUE)
+}
+
+unzip(
+  zip_path,
+  exdir = extraction_path,
+  overwrite = TRUE
+)
+
+# ---------------------------------------------------------
+# 4. Locate export.xml
+# ---------------------------------------------------------
+
+xml_files <- list.files(
+  extraction_path,
+  pattern = "^export\\.xml$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+
+if (length(xml_files) == 0) {
+  stop("export.xml could not be found in the extracted Apple Health export.")
+}
+
+xml_path <- xml_files[1]
+
+# ---------------------------------------------------------
+# 5. Parse XML
+# ---------------------------------------------------------
+
+xml <- xmlParse(xml_path)
+
+# Extract Record nodes into a data frame
+df_record <- XML:::xmlAttrsToDataFrame(xml["//Record"])
+
+# Inspect the raw data
+glimpse(df_record)
+```
+
+
+## 3. Data cleaning and transformation
+
+```{r data-cleaning, message=FALSE, warning=FALSE}
+# Clean and transform Apple Health records
+df <- df_record %>%
+  mutate(
+    device = gsub(".*(name:)|,.*", "", device),
+    value = as.numeric(as.character(value)),
+    endDate = ymd_hms(endDate, tz = "Europe/Amsterdam"),
+    startDate = ymd_hms(startDate, tz = "Europe/Amsterdam"),
+    date = as.Date(endDate),
+    year = year(endDate),
+    month = month(endDate),
+    day = day(endDate),
+    yday = yday(endDate),
+    wday = wday(endDate),
+    hour = hour(endDate),
+    minute = minute(endDate),
+    type = str_remove(type, "HKQuantityTypeIdentifier")
+  )
+
+# Inspect available health measures
+health_types <- df %>%
+  distinct(type) %>%
+  arrange(type)
+
+health_types
+```
+## 4. Daily activity patterns
+
+```{r daily-activity, message=FALSE, warning=FALSE}
+# Select step-count records
+step_data <- df %>%
+  filter(type == "StepCount") %>%
+  filter(!is.na(value))
+
+# Calculate total steps per day
+daily_steps <- step_data %>%
+  group_by(date) %>%
+  summarise(
+    total_steps = sum(value, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    weekday = factor(
+      weekdays(date),
+      levels = c(
+        "Monday", "Tuesday", "Wednesday",
+        "Thursday", "Friday", "Saturday", "Sunday"
+      )
+    ),
+    weekend = if_else(
+      weekday %in% c("Saturday", "Sunday"),
+      "Weekend",
+      "Weekday"
+    )
+  ) %>%
+  arrange(date)
+
+# Inspect the resulting daily dataset
+glimpse(daily_steps)
+
+# Basic descriptive statistics
+daily_steps %>%
+  summarise(
+    n_days = n(),
+    mean_steps = mean(total_steps, na.rm = TRUE),
+    median_steps = median(total_steps, na.rm = TRUE),
+    sd_steps = sd(total_steps, na.rm = TRUE),
+    min_steps = min(total_steps, na.rm = TRUE),
+    max_steps = max(total_steps, na.rm = TRUE)
+  )
+```
+## 5. Activity over time
+
+
+```{r activity-over-time, message=FALSE, warning=FALSE}
+ggplot(daily_steps, aes(x = date, y = total_steps)) +
+  geom_line() +
+  geom_smooth(
+    method = "loess",
+    se = FALSE,
+    linewidth = 0.8
+  ) +
+  labs(
+    title = "Daily physical activity over time",
+    subtitle = "Total recorded steps per day",
+    x = "Date",
+    y = "Steps"
+  ) +
+  theme_minimal()
+```
+## 6. Weekday and weekend patterns
+
+
+```{r weekday-weekend, message=FALSE, warning=FALSE}
+# Summarise activity by weekday/weekend
+weekday_summary <- daily_steps %>%
+  group_by(weekend) %>%
+  summarise(
+    n_days = n(),
+    mean_steps = mean(total_steps, na.rm = TRUE),
+    median_steps = median(total_steps, na.rm = TRUE),
+    sd_steps = sd(total_steps, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+weekday_summary
+```
+
+```{r weekday-weekend-plot, message=FALSE, warning=FALSE}
+ggplot(
+  daily_steps,
+  aes(x = weekend, y = total_steps)
+) +
+  geom_boxplot() +
+  labs(
+    title = "Physical activity on weekdays and weekends",
+    subtitle = "Distribution of daily step counts",
+    x = NULL,
+    y = "Daily steps"
+  ) +
+  theme_minimal()
+```
+## 7. Time-of-day activity patterns
+
+```{r activity-by-hour, message=FALSE, warning=FALSE}
+# Summarise recorded steps by hour of day
+hourly_steps <- step_data %>%
+  group_by(hour) %>%
+  summarise(
+    total_steps = sum(value, na.rm = TRUE),
+    mean_steps = mean(value, na.rm = TRUE),
+    n_records = n(),
+    .groups = "drop"
+  )
+
+hourly_steps
+```
+
+```{r activity-by-hour-plot, message=FALSE, warning=FALSE}
+ggplot(
+  hourly_steps,
+  aes(x = hour, y = total_steps)
+) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(
+    breaks = seq(0, 23, by = 2)
+  ) +
+  labs(
+    title = "When does physical activity occur?",
+    subtitle = "Recorded step activity by hour of day",
+    x = "Hour of day",
+    y = "Total recorded steps"
+  ) +
+  theme_minimal()
+```
